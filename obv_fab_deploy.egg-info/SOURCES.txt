@@ -1,0 +1,10 @@
+README.md
+pyproject.toml
+obv_fab_deploy/__init__.py
+obv_fab_deploy/deploy.py
+obv_fab_deploy/pipeline.py
+obv_fab_deploy.egg-info/PKG-INFO
+obv_fab_deploy.egg-info/SOURCES.txt
+obv_fab_deploy.egg-info/dependency_links.txt
+obv_fab_deploy.egg-info/requires.txt
+obv_fab_deploy.egg-info/top_level.txt

@@ -1,0 +1,13 @@
+[project]
+name = "obv-fab-deploy"
+version = "0.1.0"
+description = "Unofficial Microsoft Fabric deployment toolkit by Obvience"
+authors = [{ name = "Andre Fomin", email = "you@example.com" }]
+license = "MIT"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = ["requests", "pandas"]
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
