@@ -6,8 +6,10 @@ Author-email: Andre Fomin <you@example.com>
 License-Expression: MIT
 Requires-Python: >=3.8
 Description-Content-Type: text/markdown
+License-File: LICENSE
 Requires-Dist: requests
 Requires-Dist: pandas
+Dynamic: license-file
 
 # obv-fab-deploy
 
