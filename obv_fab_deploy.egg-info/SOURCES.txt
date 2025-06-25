@@ -2,7 +2,6 @@ LICENSE
 README.md
 pyproject.toml
 obv_fab_deploy/__init__.py
-obv_fab_deploy/deploy.py
 obv_fab_deploy/lakehouse.py
 obv_fab_deploy/notebook.py
 obv_fab_deploy/pipeline.py
