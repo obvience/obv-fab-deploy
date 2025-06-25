@@ -10,7 +10,7 @@ import base64
 import pprint
 from sempy_labs.directlake import update_direct_lake_model_lakehouse_connection
 
-from .utils import get_workspace_id_by_name, get_lakehouse_id_by_name
+from .utils import get_workspace_id_by_name, get_lakehouse_id_by_name, get_item_id_by_name
 
 def delete_notebook(workspace_name: str, notebook_name: str):
     """
