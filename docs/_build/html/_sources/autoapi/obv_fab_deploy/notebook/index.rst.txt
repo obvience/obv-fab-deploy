@@ -1,0 +1,29 @@
+obv_fab_deploy.notebook
+=======================
+
+.. py:module:: obv_fab_deploy.notebook
+
+
+Functions
+---------
+
+.. autoapisummary::
+
+   obv_fab_deploy.notebook.delete_notebook
+   obv_fab_deploy.notebook.deploy_notebook
+
+
+Module Contents
+---------------
+
+.. py:function:: delete_notebook(workspace_name: str, notebook_name: str)
+
+   Delete a Fabric notebook by name from a workspace using the REST API.
+
+   Args:
+       workspace_name (str): The Fabric workspace name.
+       notebook_name (str): The notebook display name.
+
+
+.. py:function:: deploy_notebook(source_workspace_name, source_notebook_name, target_workspace_name, target_notebook_name, target_lakehouse_name)
+

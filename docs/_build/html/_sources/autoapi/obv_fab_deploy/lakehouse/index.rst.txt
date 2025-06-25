@@ -1,0 +1,19 @@
+obv_fab_deploy.lakehouse
+========================
+
+.. py:module:: obv_fab_deploy.lakehouse
+
+
+Functions
+---------
+
+.. autoapisummary::
+
+   obv_fab_deploy.lakehouse.deploy_lakehouse_with_shortcuts
+
+
+Module Contents
+---------------
+
+.. py:function:: deploy_lakehouse_with_shortcuts(source_workspace_name, source_lakehouse_name, target_workspace_name, target_lakehouse_name)
+

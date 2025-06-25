@@ -1,0 +1,23 @@
+obv_fab_deploy.semantic_model
+=============================
+
+.. py:module:: obv_fab_deploy.semantic_model
+
+
+Functions
+---------
+
+.. autoapisummary::
+
+   obv_fab_deploy.semantic_model.deploy_semantic_model
+
+
+Module Contents
+---------------
+
+.. py:function:: deploy_semantic_model(source_workspace_name, source_semantic_model_name, target_workspace_name, target_semantic_model_name, target_lakehouse_name)
+
+   Deploys a semantic model from source workspace to target workspace,
+   and rebinds it to the specified target lakehouse.
+
+

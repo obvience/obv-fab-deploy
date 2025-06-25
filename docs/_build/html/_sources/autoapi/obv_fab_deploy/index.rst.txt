@@ -1,0 +1,20 @@
+obv_fab_deploy
+==============
+
+.. py:module:: obv_fab_deploy
+
+
+Submodules
+----------
+
+.. toctree::
+   :maxdepth: 1
+
+   /autoapi/obv_fab_deploy/lakehouse/index
+   /autoapi/obv_fab_deploy/notebook/index
+   /autoapi/obv_fab_deploy/pipeline/index
+   /autoapi/obv_fab_deploy/report/index
+   /autoapi/obv_fab_deploy/semantic_model/index
+   /autoapi/obv_fab_deploy/utils/index
+
+

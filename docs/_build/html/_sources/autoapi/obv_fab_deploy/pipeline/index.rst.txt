@@ -1,0 +1,19 @@
+obv_fab_deploy.pipeline
+=======================
+
+.. py:module:: obv_fab_deploy.pipeline
+
+
+Functions
+---------
+
+.. autoapisummary::
+
+   obv_fab_deploy.pipeline.deploy_pipeline
+
+
+Module Contents
+---------------
+
+.. py:function:: deploy_pipeline(source_workspace_name, pipeline_name, target_workspace_name, target_lakehouse_name)
+

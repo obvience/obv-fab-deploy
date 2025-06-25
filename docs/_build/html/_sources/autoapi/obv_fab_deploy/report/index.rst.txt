@@ -1,0 +1,19 @@
+obv_fab_deploy.report
+=====================
+
+.. py:module:: obv_fab_deploy.report
+
+
+Functions
+---------
+
+.. autoapisummary::
+
+   obv_fab_deploy.report.deploy_report
+
+
+Module Contents
+---------------
+
+.. py:function:: deploy_report(source_workspace_name, source_report_name, target_workspace_name, target_report_name, target_dataset_name)
+

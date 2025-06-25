@@ -1,0 +1,41 @@
+obv_fab_deploy.utils
+====================
+
+.. py:module:: obv_fab_deploy.utils
+
+
+Functions
+---------
+
+.. autoapisummary::
+
+   obv_fab_deploy.utils.get_workspace_id_by_name
+   obv_fab_deploy.utils.get_lakehouse_id_by_name
+   obv_fab_deploy.utils.get_item_id_by_name
+   obv_fab_deploy.utils.get_dataset_id_by_name
+   obv_fab_deploy.utils.rebind_report
+   obv_fab_deploy.utils.refresh_semantic_model
+   obv_fab_deploy.utils.get_report_id_by_name
+
+
+Module Contents
+---------------
+
+.. py:function:: get_workspace_id_by_name(workspace_name: str) -> str
+
+.. py:function:: get_lakehouse_id_by_name(workspace_name, lakehouse_name)
+
+.. py:function:: get_item_id_by_name(workspace_name, item_name, item_type)
+
+.. py:function:: get_dataset_id_by_name(workspace_id, dataset_name)
+
+.. py:function:: rebind_report(report_name_or_id, dataset_name_or_id, report_workspace_id, dataset_workspace_id)
+
+   Rebinds an existing report to a new semantic model (dataset).
+   Accepts names or IDs for report and dataset.
+
+
+.. py:function:: refresh_semantic_model(workspace_name: str, model_name: str)
+
+.. py:function:: get_report_id_by_name(workspace_id, report_name)
+
