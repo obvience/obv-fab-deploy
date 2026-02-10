@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+dist/
+build/
+*.whl
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Test file (contains credentials)
+obv_fab_deploy/test_cases.py
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Docs build output
+docs/_build/
+
+# OS
+.DS_Store
+Thumbs.db

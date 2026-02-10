@@ -1,140 +1,333 @@
-import sempy.fabric as fabric
-from sempy.fabric import FabricRestClient
-import sempy_labs.lakehouse as lake
-import sempy_labs.report as rep
-import sempy_labs as labs
+"""
+Pipeline deployment module.
+Deploys Fabric data pipelines from a source to a target workspace
+using direct Fabric REST API calls.
+
+Rebinds Copy-activity sinks to the target lakehouse and
+TridentNotebook activities to the matching notebooks in the target workspace.
+"""
+
 import requests
 import time
 import json
 import base64
-import pprint
-from sempy_labs.directlake import update_direct_lake_model_lakehouse_connection
+from typing import Optional
 
-from .utils import get_workspace_id_by_name, get_lakehouse_id_by_name
+from .utils import (
+    FABRIC_API,
+    _fabric_headers,
+    get_workspace_id_by_name,
+    get_lakehouse_id_by_name,
+    get_item_id_by_name,
+    list_items,
+)
 
-def deploy_pipeline(source_workspace_name, pipeline_name, target_workspace_name, target_lakehouse_name):
-    try:
-        src_ws = get_workspace_id_by_name(source_workspace_name)
-        tgt_ws = get_workspace_id_by_name(target_workspace_name)
-        tgt_lh = get_lakehouse_id_by_name(target_workspace_name, target_lakehouse_name)
-    except Exception as e:
-        print(f"❌ Could not resolve IDs for input parameters: {e}")
-        return
 
-    try:
-        df = labs.list_data_pipelines(src_ws)
-        row = df[df["Data Pipeline Name"] == pipeline_name]
-        if row.empty:
-            print(f"❌ Pipeline '{pipeline_name}' not found in '{source_workspace_name}'")
-            return
+# =============================================================================
+# LRO Helper
+# =============================================================================
 
-        source_def = labs.get_data_pipeline_definition(name=pipeline_name, workspace=src_ws, decode=False)
-        row = source_def[source_def["path"] == "pipeline-content.json"]
-        if not row.empty:
-            source_pipeline_payload = row.iloc[0].to_dict()
+def _poll_lro(
+    url: str,
+    label: str,
+    creds: Optional[dict] = None,
+    max_attempts: int = 15,
+    interval: int = 5,
+    fetch_result: bool = False,
+):
+    """
+    Poll a long-running operation until it succeeds, fails, or times out.
+
+    Args:
+        url: The Location URL from the initial 202 response.
+        label: Human-readable label for logging.
+        creds: Optional credentials dict.
+        max_attempts: Max polling iterations.
+        interval: Seconds between polls.
+        fetch_result: If True, fetch the /result endpoint on success.
+
+    Returns:
+        The result JSON (if fetch_result), True (if not), or None on failure/timeout.
+    """
+    headers = _fabric_headers(creds)
+    for _ in range(max_attempts):
+        time.sleep(interval)
+        resp = requests.get(url, headers=headers)
+        resp.raise_for_status()
+        body = resp.json()
+
+        if body.get("status") == "Succeeded":
+            if fetch_result:
+                result_resp = requests.get(url + "/result", headers=headers)
+                result_resp.raise_for_status()
+                return result_resp.json()
+            return True
+        elif body.get("status") == "Failed":
+            print(f"❌ {label} failed: {body}")
+            return None
         else:
-            print("❌ pipeline-content.json not found")
-            return
+            print(f"⏳ {label} running...")
 
-        # Decode for optional inspection (no modification here)
-        source_pipeline_dict = json.loads(base64.b64decode(source_pipeline_payload["payload"]).decode("utf-8"))
-        #print(json.dumps(source_pipeline_dict, indent=2))  # For debugging
+    print(f"❌ Timed out waiting for {label}")
+    return None
 
-        # Rebind Sink datasets from source to target workspace and lakehouse
-        for activity in source_pipeline_dict.get("properties", {}).get("activities", []):
-            if activity.get("type") == "Copy":
-                sink = activity.get("typeProperties", {}).get("sink", {})
-                if sink.get("type") == "LakehouseTableSink":
-                    type_props = (
-                        sink.get("datasetSettings", {})
-                            .get("linkedService", {})
-                            .get("properties", {})
-                            .get("typeProperties", {})
-                    )
-                    type_props["workspaceId"] = str(tgt_ws)
-                    type_props["artifactId"] = str(tgt_lh)
 
-        # Rebind Notebooks from soruce wourkspace to corresponding notebooks in target workspace
-        # Get all items, filter for notebooks (type == "notebook")
-        df_src_items = fabric.list_items(workspace=src_ws)
-        df_tgt_items = fabric.list_items(workspace=tgt_ws)
+# =============================================================================
+# Pipeline Definition Helper
+# =============================================================================
 
-        # Filter to notebooks only
-        df_src_notebooks = df_src_items[df_src_items["Type"] == "Notebook"]
-        df_tgt_notebooks = df_tgt_items[df_tgt_items["Type"] == "Notebook"]
+def _get_pipeline_definition(
+    workspace_id: str, pipeline_id: str, creds: Optional[dict] = None
+) -> Optional[dict]:
+    """
+    Fetch the full definition of a data pipeline via REST API.
+    Handles both synchronous (200) and long-running (202) responses.
 
-        # Map target notebook names to their IDs
-        tgt_notebook_name_to_id = dict(zip(df_tgt_notebooks["Display Name"], df_tgt_notebooks["Id"]))
+    Args:
+        workspace_id: The workspace ID (GUID).
+        pipeline_id: The pipeline item ID (GUID).
+        creds: Optional credentials dict.
 
-        for activity in source_pipeline_dict.get("properties", {}).get("activities", []):
-            if activity.get("type") == "TridentNotebook":
-                nb_id = activity.get("typeProperties", {}).get("notebookId")
-                nb_row = df_src_notebooks[df_src_notebooks["Id"] == nb_id]
-                if not nb_row.empty:
-                    nb_name = nb_row.iloc[0]["Display Name"]
-                    tgt_nb_id = tgt_notebook_name_to_id.get(nb_name)
-                    print(f"Checking activity: {activity['name']} (src_nb_id={nb_id}, name={nb_name}, tgt_nb_id={tgt_nb_id})")
-                    if tgt_nb_id:
-                        print(f"Rebinding notebook '{nb_name}': {nb_id} -> {tgt_nb_id} | ws: {activity['typeProperties']['workspaceId']} -> {str(tgt_ws)}")
-                        activity["typeProperties"]["notebookId"] = tgt_nb_id
-                        activity["typeProperties"]["workspaceId"] = str(tgt_ws)
-                    else:
-                        print(f"Target notebook with name '{nb_name}' not found in target workspace.")
+    Returns:
+        The definition dict (with 'parts' list), or None on failure.
+    """
+    headers = _fabric_headers(creds)
+    url = f"{FABRIC_API}/workspaces/{workspace_id}/dataPipelines/{pipeline_id}/getDefinition"
+
+    resp = requests.post(url, headers=headers)
+
+    if resp.status_code == 202:
+        result = _poll_lro(resp.headers["Location"], "getDefinition", creds, fetch_result=True)
+        return result.get("definition") if result else None
+    elif resp.status_code == 200:
+        return resp.json().get("definition")
+    else:
+        print(f"❌ getDefinition failed: {resp.status_code} {resp.text}")
+        return None
+
+
+# =============================================================================
+# Pipeline Content Patcher
+# =============================================================================
+
+def _patch_pipeline_content(
+    definition: dict,
+    target_workspace_id: str,
+    target_lakehouse_id: str,
+    source_workspace_id: str,
+    creds: Optional[dict] = None,
+) -> dict:
+    """
+    Patch the pipeline-content.json part to rebind activities to the target workspace.
+
+    - Copy activity sinks (LakehouseTableSink) → target workspace/lakehouse
+    - TridentNotebook activities → matching notebook IDs in the target workspace (by name)
+
+    Args:
+        definition: The definition dict with a 'parts' list.
+        target_workspace_id: Target workspace GUID.
+        target_lakehouse_id: Target lakehouse GUID.
+        source_workspace_id: Source workspace GUID (for notebook name lookup).
+        creds: Optional credentials dict.
+
+    Returns:
+        The patched definition dict.
+    """
+    # Find the pipeline-content.json part
+    content_part = next(
+        (p for p in definition["parts"] if p["path"] == "pipeline-content.json"),
+        None,
+    )
+    if content_part is None:
+        print("⚠️ pipeline-content.json not found in definition")
+        return definition
+
+    pipeline_dict = json.loads(base64.b64decode(content_part["payload"]).decode("utf-8"))
+
+    # --- Build notebook name→ID maps for source and target ----------------
+    src_notebooks = list_items(source_workspace_id, "Notebook", creds)
+    tgt_notebooks = list_items(target_workspace_id, "Notebook", creds)
+
+    src_nb_id_to_name = {nb["id"]: nb["displayName"] for nb in src_notebooks}
+    tgt_nb_name_to_id = {nb["displayName"]: nb["id"] for nb in tgt_notebooks}
+
+    # --- Patch activities -------------------------------------------------
+    for activity in pipeline_dict.get("properties", {}).get("activities", []):
+
+        # Rebind Copy-activity sinks to target lakehouse
+        if activity.get("type") == "Copy":
+            sink = activity.get("typeProperties", {}).get("sink", {})
+            if sink.get("type") == "LakehouseTableSink":
+                type_props = (
+                    sink.get("datasetSettings", {})
+                        .get("linkedService", {})
+                        .get("properties", {})
+                        .get("typeProperties", {})
+                )
+                type_props["workspaceId"] = str(target_workspace_id)
+                type_props["artifactId"] = str(target_lakehouse_id)
+                print(f"   🔗 Rebound sink in Copy activity '{activity.get('name')}'")
+
+        # Rebind TridentNotebook activities to target notebook IDs
+        elif activity.get("type") == "TridentNotebook":
+            nb_id = activity.get("typeProperties", {}).get("notebookId")
+            nb_name = src_nb_id_to_name.get(nb_id)
+            if nb_name:
+                tgt_nb_id = tgt_nb_name_to_id.get(nb_name)
+                if tgt_nb_id:
+                    activity["typeProperties"]["notebookId"] = tgt_nb_id
+                    activity["typeProperties"]["workspaceId"] = str(target_workspace_id)
+                    print(f"   🔗 Rebound notebook '{nb_name}' → {tgt_nb_id}")
                 else:
-                    print(f"No notebook found in source notebooks with id '{nb_id}'")
+                    print(f"   ⚠️ Target notebook '{nb_name}' not found in target workspace")
+            else:
+                print(f"   ⚠️ Source notebook ID '{nb_id}' not found in source workspace")
+
+    # Re-encode the patched content
+    content_part["payload"] = base64.b64encode(
+        json.dumps(pipeline_dict).encode("utf-8")
+    ).decode()
+
+    return definition
 
 
+# =============================================================================
+# Deploy Pipeline
+# =============================================================================
+
+def deploy_pipeline(
+    source_workspace_name: str,
+    pipeline_name: str,
+    target_workspace_name: str,
+    target_lakehouse_name: str,
+    target_pipeline_name: Optional[str] = None,
+    creds: Optional[dict] = None,
+):
+    """
+    Deploy a data pipeline from a source workspace to a target workspace.
+    Rebinds Copy-activity sinks to the target lakehouse and
+    TridentNotebook activities to matching notebooks in the target workspace.
+
+    If the target pipeline already exists it is updated in-place;
+    otherwise a new pipeline is created.
+
+    Args:
+        source_workspace_name: Name of the source workspace.
+        pipeline_name: Name of the pipeline in the source workspace.
+        target_workspace_name: Name of the target workspace.
+        target_lakehouse_name: Name of the lakehouse to rebind sinks to.
+        target_pipeline_name: Display name for the target pipeline.
+                              Defaults to the source pipeline_name if not provided.
+        creds: Optional credentials dict. Not needed in Fabric notebooks.
+    """
+    if target_pipeline_name is None:
+        target_pipeline_name = pipeline_name
+
+    # --- resolve workspace and lakehouse IDs ------------------------------
+    try:
+        source_ws = get_workspace_id_by_name(source_workspace_name, creds)
+        target_ws = get_workspace_id_by_name(target_workspace_name, creds)
+        target_lh = get_lakehouse_id_by_name(target_workspace_name, target_lakehouse_name, creds)
     except Exception as e:
-        print(f"❌ Could not fetch pipeline definition: {e}")
+        print(f"❌ Could not resolve IDs: {e}")
         return
 
-    try:
-        df_target = labs.list_data_pipelines(tgt_ws)
-        match = df_target[df_target["Data Pipeline Name"] == pipeline_name]
-        if match.empty:
-            print(f"ℹ️ Creating pipeline '{pipeline_name}' in target...")
-            labs.create_data_pipeline(name=pipeline_name, workspace=tgt_ws)
-            df_target = labs.list_data_pipelines(tgt_ws)
-            match = df_target[df_target["Data Pipeline Name"] == pipeline_name]
+    # --- get source pipeline definition -----------------------------------
+    source_pipeline_id = get_item_id_by_name(
+        source_workspace_name, pipeline_name, "DataPipeline", creds
+    )
+    definition = _get_pipeline_definition(source_ws, source_pipeline_id, creds)
+    if definition is None:
+        print(f"❌ Could not retrieve definition for pipeline '{pipeline_name}'")
+        return
 
-        target_pipeline_id = match["Data Pipeline ID"].iloc[0]
+    # --- patch activities to target workspace/lakehouse -------------------
+    print(f"   Patching pipeline activities → {target_lakehouse_name}")
+    definition = _patch_pipeline_content(
+        definition, target_ws, target_lh, source_ws, creds
+    )
 
-        target_def = labs.get_data_pipeline_definition(name=pipeline_name, workspace=tgt_ws, decode=False)
-        target_parts = target_def.to_dict(orient="records")
+    # --- check if target pipeline already exists --------------------------
+    existing_pipelines = list_items(target_ws, "DataPipeline", creds)
+    matches = [p for p in existing_pipelines if p["displayName"] == target_pipeline_name]
+    headers = _fabric_headers(creds)
 
-        # Overwrite ONLY in target_parts
-        for i, part in enumerate(target_parts):
-            if part["path"] == "pipeline-content.json":
-                # Fresh encode from source pipeline dict (not source var)
-                new_payload = base64.b64encode(json.dumps(source_pipeline_dict).encode("utf-8")).decode("utf-8")
-                target_parts[i]["payload"] = new_payload
-                break
+    if matches:
+        # --- update existing pipeline -------------------------------------
+        pipeline_id = matches[0]["id"]
+        print(f"🛠️ Pipeline '{target_pipeline_name}' exists. Updating definition...")
 
-        payload = {"definition": {"parts": target_parts}}
+        # Get .platform from TARGET pipeline (required for updateMetadata)
+        target_def = _get_pipeline_definition(target_ws, pipeline_id, creds)
+        if target_def:
+            platform_payload = next(
+                (p["payload"] for p in target_def["parts"] if p["path"] == ".platform"),
+                None,
+            )
+            if platform_payload:
+                has_platform = False
+                for part in definition["parts"]:
+                    if part["path"] == ".platform":
+                        part["payload"] = platform_payload
+                        has_platform = True
+                        break
+                if not has_platform:
+                    definition["parts"].append({
+                        "path": ".platform",
+                        "payload": platform_payload,
+                        "payloadType": "InlineBase64",
+                    })
 
-        client = fabric.FabricRestClient()
-        resp = client.post(
-            f"/v1/workspaces/{tgt_ws}/dataPipelines/{target_pipeline_id}/updateDefinition?updateMetadata=true",
-            json=payload
+        resp = requests.post(
+            f"{FABRIC_API}/workspaces/{target_ws}/dataPipelines/{pipeline_id}/updateDefinition?updateMetadata=true",
+            headers=headers,
+            json={"definition": definition},
         )
-
         if resp.status_code == 202:
-            op_url = resp.headers.get("Location")
-            for _ in range(10):
-                time.sleep(5)
-                status = client.get(op_url).json()
-                if status.get("status") == "Succeeded":
-                    print(f"✅ Pipeline '{pipeline_name}' updated via LRO.")
-                    return
-                elif status.get("status") == "Failed":
-                    print(f"❌ LRO failed: {status}")
-                    return
-                print("⏳ Waiting for LRO...")
-            print("❌ Timed out waiting for pipeline update.")
-        elif resp.status_code in (200, 201):
-            print(f"✅ Pipeline '{pipeline_name}' updated.")
-        else:
-            print(f"❌ Deployment failed ({resp.status_code}): {resp.text}")
+            result = _poll_lro(resp.headers["Location"], "Pipeline update", creds)
+            if result is None:
+                return
+        elif resp.status_code != 200:
+            print(f"❌ Update failed: {resp.status_code} {resp.text}")
+            return
+        print(f"✅ Updated pipeline '{target_pipeline_name}'")
+    else:
+        # --- create new pipeline ------------------------------------------
+        print(f"📄 Pipeline '{target_pipeline_name}' not found. Creating...")
 
-    except Exception as e:
-        print(f"❌ Deployment error: {e}")
+        # Patch .platform displayName for the new pipeline
+        for part in definition.get("parts", []):
+            if part["path"] == ".platform":
+                try:
+                    content = base64.b64decode(part["payload"]).decode("utf-8")
+                    platform_obj = json.loads(content)
+                    platform_obj["metadata"]["displayName"] = target_pipeline_name
+                    part["payload"] = base64.b64encode(
+                        json.dumps(platform_obj, indent=2).encode()
+                    ).decode()
+                except Exception:
+                    pass
+
+        resp = requests.post(
+            f"{FABRIC_API}/workspaces/{target_ws}/items",
+            headers=headers,
+            json={
+                "displayName": target_pipeline_name,
+                "type": "DataPipeline",
+                "definition": definition,
+            },
+        )
+        if resp.status_code == 202:
+            result = _poll_lro(
+                resp.headers["Location"], "Pipeline creation", creds, fetch_result=True
+            )
+            if result is None:
+                return
+        elif resp.status_code in (200, 201):
+            pass
+        else:
+            print(f"❌ Create failed: {resp.status_code} {resp.text}")
+            return
+        print(f"✅ Created pipeline '{target_pipeline_name}'")
+
+    print(f"✅ Finished '{pipeline_name}' → '{target_pipeline_name}'")

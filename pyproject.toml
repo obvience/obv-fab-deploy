@@ -1,12 +1,27 @@
 [project]
 name = "obv-fab-deploy"
-version = "0.1.4"
+version = "0.2.0"
 description = "Unofficial Microsoft Fabric deployment toolkit by Obvience"
 authors = [{ name = "Andre Fomin", email = "you@example.com" }]
 license = "MIT"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = ["requests", "pandas"]
+dependencies = ["requests", "azure-identity"]
+keywords = ["microsoft-fabric", "deployment", "devops", "ci-cd", "lakehouse", "power-bi"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries",
+]
+
+[project.urls]
+Homepage = "https://github.com/obvience/obv-fab-deploy"
+Issues = "https://github.com/obvience/obv-fab-deploy/issues"
 
 [build-system]
 requires = ["setuptools", "wheel"]
