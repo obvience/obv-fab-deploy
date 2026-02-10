@@ -12,8 +12,8 @@ build/
 venv/
 env/
 
-# Test file (contains credentials)
-obv_fab_deploy/test_cases.py
+# Secrets
+.env
 
 # IDE
 .vscode/

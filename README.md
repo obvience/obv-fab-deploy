@@ -142,8 +142,9 @@ obv_fab_deploy/
 ├── notebook.py          # Notebook deployment
 ├── semantic_model.py    # Semantic model deployment with Direct Lake rebinding
 ├── report.py            # Report deployment with dataset rebinding
-├── pipeline.py          # Pipeline deployment with activity rebinding
-└── test_cases.py        # Manual test script
+└── pipeline.py          # Pipeline deployment with activity rebinding
+tests/
+└── test_cases.py        # Manual test script (not included in package)
 ```
 
 ## License
