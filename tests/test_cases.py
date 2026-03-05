@@ -44,7 +44,7 @@ if not all(creds.values()):
     sys.exit(1)
 
 # =============================================================================
-# TEST 1: List Workspaces
+# TEST 1: List Workspacescle
 # =============================================================================
 print("=" * 60)
 print("TEST 1: List Workspaces")

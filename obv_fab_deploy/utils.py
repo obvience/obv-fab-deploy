@@ -30,6 +30,31 @@ from azure.identity import DefaultAzureCredential, ClientSecretCredential
 # Authentication Helper
 # =============================================================================
 
+def _get_fabric_notebook_token(scope: str) -> Optional[str]:
+    """
+    Try to get a token using Fabric notebook built-in credentials.
+    Returns the token string if running in a Fabric notebook, or None otherwise.
+    """
+    # Strip "/.default" suffix — Fabric's getToken expects the base resource URL
+    resource = scope.replace("/.default", "")
+
+    # Try notebookutils (newer Fabric runtime)
+    try:
+        import notebookutils
+        return notebookutils.credentials.getToken(resource)
+    except Exception:
+        pass
+
+    # Try mssparkutils (older Fabric runtime)
+    try:
+        import mssparkutils
+        return mssparkutils.credentials.getToken(resource)
+    except Exception:
+        pass
+
+    return None
+
+
 def _get_token(scope: str, creds: Optional[dict] = None) -> str:
     """
     Get an access token for the specified scope.
@@ -37,7 +62,7 @@ def _get_token(scope: str, creds: Optional[dict] = None) -> str:
     Args:
         scope: The API scope (e.g., "https://api.fabric.microsoft.com/.default")
         creds: Optional credentials dict with tenant_id, client_id, client_secret.
-               If not provided, tries to use the current environment (Fabric notebook, az login, etc.)
+               If not provided, tries Fabric notebook auth first, then DefaultAzureCredential.
     
     Returns:
         Access token string.
@@ -50,12 +75,16 @@ def _get_token(scope: str, creds: Optional[dict] = None) -> str:
                 client_id=creds["client_id"],
                 client_secret=creds["client_secret"]
             )
-        else:
-            # Try to use environment credentials (Fabric notebook, az login, env vars)
-            credential = DefaultAzureCredential()
-        
-        token = credential.get_token(scope)
-        return token.token
+            return credential.get_token(scope).token
+
+        # Try Fabric notebook native auth first
+        fabric_token = _get_fabric_notebook_token(scope)
+        if fabric_token:
+            return fabric_token
+
+        # Fall back to DefaultAzureCredential (az login, env vars, managed identity, etc.)
+        credential = DefaultAzureCredential()
+        return credential.get_token(scope).token
     
     except Exception as e:
         if creds:
