@@ -101,6 +101,70 @@ def _get_semantic_model_definition(
 
 
 # =============================================================================
+# Direct Lake Mode Detection
+# =============================================================================
+
+def _detect_direct_lake_mode(definition: dict) -> Optional[str]:
+    """
+    Detect whether a semantic model uses Direct Lake on OneLake or Direct Lake on SQL.
+
+    Scans the base64-encoded TMDL definition parts for the connection expression:
+      - AzureStorage.DataLake(...) → "onelake"
+      - Sql.Database(...)          → "sql"
+
+    Returns:
+        "onelake", "sql", or None if no known pattern is found.
+    """
+    for part in definition.get("parts", []):
+        payload_b64 = part.get("payload", "")
+        try:
+            content = base64.b64decode(payload_b64).decode("utf-8")
+        except Exception:
+            continue
+        if "AzureStorage.DataLake" in content:
+            return "onelake"
+        if "Sql.Database" in content:
+            return "sql"
+    return None
+
+
+# =============================================================================
+# SQL Analytics Endpoint Lookup
+# =============================================================================
+
+def _get_lakehouse_sql_endpoint(
+    workspace_id: str, lakehouse_id: str, creds: Optional[dict] = None
+) -> tuple:
+    """
+    Fetch the SQL analytics endpoint connection string and ID for a lakehouse.
+
+    Calls GET /v1/workspaces/{workspaceId}/lakehouses/{lakehouseId} and extracts
+    the sqlEndpointProperties from the response.
+
+    Returns:
+        (connection_string, endpoint_id) tuple.
+
+    Raises:
+        ValueError if the SQL endpoint is not provisioned or unavailable.
+    """
+    headers = _fabric_headers(creds)
+    url = f"{FABRIC_API}/workspaces/{workspace_id}/lakehouses/{lakehouse_id}"
+    resp = requests.get(url, headers=headers)
+    resp.raise_for_status()
+
+    props = resp.json().get("properties", {})
+    sql_props = props.get("sqlEndpointProperties", {})
+    connection_string = sql_props.get("connectionString")
+    endpoint_id = sql_props.get("id")
+
+    if not connection_string or not endpoint_id:
+        raise ValueError(
+            f"SQL analytics endpoint not available for lakehouse {lakehouse_id}. "
+            "It may still be provisioning — check the Fabric portal."
+        )
+    return connection_string, endpoint_id
+
+
 # =============================================================================
 # Direct Lake Connection Patcher
 # =============================================================================
@@ -111,12 +175,23 @@ def _patch_direct_lake_connection(
     target_lakehouse_id: str,
     target_lakehouse_name: str,
     target_model_name: str,
+    direct_lake_mode: Optional[str] = None,
+    sql_endpoint_connection_string: Optional[str] = None,
+    sql_endpoint_id: Optional[str] = None,
+    target_schema_name: Optional[str] = None,
 ) -> dict:
     """
     Patch TMDL definition parts to point to a new lakehouse.
 
-    Direct Lake models use AzureStorage.DataLake with a OneLake URL:
-        https://onelake.dfs.fabric.microsoft.com/{workspace_id}/{lakehouse_id}
+    Handles both Direct Lake modes:
+
+      - **Direct Lake on OneLake** — patches the AzureStorage.DataLake() URL:
+            AzureStorage.DataLake("https://onelake.dfs.fabric.microsoft.com/{ws}/{lh}")
+            Also strips all schemaName lines (not used by DL-on-OneLake).
+
+      - **Direct Lake on SQL** — patches the Sql.Database() connection:
+            Sql.Database("{sql_endpoint_fqdn}", "{sql_endpoint_id}")
+            Optionally remaps schemaName if target_schema_name is provided.
 
     Also patches the .platform displayName to match the target model name.
 
@@ -126,6 +201,12 @@ def _patch_direct_lake_connection(
         target_lakehouse_id: Target lakehouse GUID.
         target_lakehouse_name: Target lakehouse display name.
         target_model_name: Target semantic model display name.
+        direct_lake_mode: "onelake" or "sql" (from _detect_direct_lake_mode).
+        sql_endpoint_connection_string: SQL analytics endpoint FQDN (required for "sql" mode).
+        sql_endpoint_id: SQL analytics endpoint GUID (required for "sql" mode).
+        target_schema_name: Schema name for the target lakehouse (e.g. "dbo", "o2c").
+            For DL-on-SQL: if provided, all schemaName values are remapped to this.
+            For DL-on-OneLake: ignored (schemaName lines are always stripped).
 
     Returns:
         The patched definition dict.
@@ -151,20 +232,37 @@ def _patch_direct_lake_connection(
             except Exception:
                 pass
 
-        # --- Patch OneLake DFS URL for Direct Lake ---
-        # Pattern: AzureStorage.DataLake("https://onelake.dfs.fabric.microsoft.com/{ws_id}/{lh_id}")
-        content = re.sub(
-            r'AzureStorage\.DataLake\s*\(\s*"https://onelake\.dfs\.fabric\.microsoft\.com/[^"]*"',
-            f'AzureStorage.DataLake("{new_onelake_url}"',
-            content,
-        )
-
-        # --- Patch Sql.Database() references (Import/DQ models) ---
-        content = re.sub(
-            r'Sql\.Database\s*\(\s*"[^"]*"\s*,\s*"[^"]*"\s*\)',
-            f'Sql.Database("{new_onelake_url}", "{target_lakehouse_id}")',
-            content,
-        )
+        # --- Patch connection based on Direct Lake mode ---
+        if direct_lake_mode == "onelake":
+            # Direct Lake on OneLake: patch AzureStorage.DataLake URL
+            content = re.sub(
+                r'AzureStorage\.DataLake\s*\(\s*"https://onelake\.dfs\.fabric\.microsoft\.com/[^"]*"',
+                f'AzureStorage.DataLake("{new_onelake_url}"',
+                content,
+            )
+            # DL-on-OneLake does not use schemaName — strip all occurrences
+            content = re.sub(r'\n[ \t]*schemaName:.*', '', content)
+        elif direct_lake_mode == "sql" and sql_endpoint_connection_string and sql_endpoint_id:
+            # Direct Lake on SQL: patch Sql.Database with target SQL analytics endpoint
+            content = re.sub(
+                r'Sql\.Database\s*\(\s*"[^"]*"\s*,\s*"[^"]*"\s*\)',
+                f'Sql.Database("{sql_endpoint_connection_string}", "{sql_endpoint_id}")',
+                content,
+            )
+            # Remap schemaName if a target schema was specified
+            if target_schema_name:
+                content = re.sub(
+                    r'(schemaName:)\s*\S+',
+                    f'\\1 {target_schema_name}',
+                    content,
+                )
+        else:
+            # Unknown mode — try OneLake pattern as fallback
+            content = re.sub(
+                r'AzureStorage\.DataLake\s*\(\s*"https://onelake\.dfs\.fabric\.microsoft\.com/[^"]*"',
+                f'AzureStorage.DataLake("{new_onelake_url}"',
+                content,
+            )
 
         if content != original:
             part["payload"] = base64.b64encode(content.encode("utf-8")).decode()
@@ -187,6 +285,7 @@ def deploy_semantic_model(
     target_workspace_name: str,
     target_semantic_model_name: str,
     target_lakehouse_name: str,
+    target_schema_name: Optional[str] = None,
     creds: Optional[dict] = None,
 ):
     """
@@ -202,6 +301,10 @@ def deploy_semantic_model(
         target_workspace_name: Name of the target workspace.
         target_semantic_model_name: Display name for the target semantic model.
         target_lakehouse_name: Name of the lakehouse to rebind to in the target workspace.
+        target_schema_name: Optional schema name for the target lakehouse (e.g. "dbo").
+            For DL-on-SQL models, remaps all schemaName values to this.
+            For DL-on-OneLake, schemaName lines are always stripped regardless.
+            If None and DL-on-SQL, schema names are left unchanged from source.
         creds: Optional credentials dict. Not needed in Fabric notebooks.
     """
     # --- resolve workspace IDs --------------------------------------------
@@ -223,6 +326,20 @@ def deploy_semantic_model(
     try:
         target_lakehouse_id = get_lakehouse_id_by_name(target_workspace_name, target_lakehouse_name, creds)
 
+        # Detect Direct Lake mode (OneLake vs SQL)
+        dl_mode = _detect_direct_lake_mode(definition)
+        print(f"   Detected Direct Lake mode: {dl_mode or 'unknown'}")
+
+        sql_conn_str = None
+        sql_ep_id = None
+
+        if dl_mode == "sql":
+            try:
+                sql_conn_str, sql_ep_id = _get_lakehouse_sql_endpoint(target_ws, target_lakehouse_id, creds)
+                print(f"   Resolved target SQL endpoint: {sql_conn_str}")
+            except Exception as e:
+                print(f"   ⚠️ Could not fetch SQL endpoint for target lakehouse: {e}")
+
         print(f"   Patching Direct Lake connection → {target_lakehouse_name}")
         definition = _patch_direct_lake_connection(
             definition,
@@ -230,6 +347,10 @@ def deploy_semantic_model(
             target_lakehouse_id=target_lakehouse_id,
             target_lakehouse_name=target_lakehouse_name,
             target_model_name=target_semantic_model_name,
+            direct_lake_mode=dl_mode,
+            sql_endpoint_connection_string=sql_conn_str,
+            sql_endpoint_id=sql_ep_id,
+            target_schema_name=target_schema_name,
         )
     except Exception as e:
         print(f"⚠️ Lakehouse lookup / rebinding failed: {e}. Deploying without rebinding.")

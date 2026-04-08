@@ -1,6 +1,6 @@
 [project]
 name = "obv-fab-deploy"
-version = "0.2.1"
+version = "0.3.0"
 description = "Unofficial Microsoft Fabric deployment toolkit by Obvience"
 authors = [{ name = "Andre Fomin" }]
 license = "MIT"

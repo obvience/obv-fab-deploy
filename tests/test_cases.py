@@ -11,7 +11,9 @@ import sys
 # Load .env file if python-dotenv is available
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    # Look for .env in the package root (one level up from tests/)
+    _env_path = os.path.join(os.path.dirname(__file__), os.pardir, ".env")
+    load_dotenv(_env_path)
 except ImportError:
     pass  # .env vars must be set manually in the environment
 
